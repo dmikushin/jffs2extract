@@ -157,6 +157,7 @@ struct dir *putdir(struct dir *dd, struct jffs2_raw_dirent *n)
 			d->type = n->type;
 			memcpy(d->name, n->name, n->nsize);
 			d->nsize = n->nsize;
+			d->name[n->nsize] = '\0';
 			d->ino = je32_to_cpu(n->ino);
 			d->next = NULL;
 
@@ -177,6 +178,7 @@ struct dir *putdir(struct dir *dd, struct jffs2_raw_dirent *n)
 				dd->next->type = n->type;
 				memcpy(dd->next->name, n->name, n->nsize);
 				dd->next->nsize = n->nsize;
+				dd->next->name[n->nsize] = '\0';
 				dd->next->ino = je32_to_cpu(n->ino);
 				dd->next->next = NULL;
 
