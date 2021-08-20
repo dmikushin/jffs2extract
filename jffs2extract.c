@@ -70,6 +70,7 @@ struct dir {
 int target_endian = __BYTE_ORDER;
 
 void putblock(char *, size_t, size_t *, struct jffs2_raw_inode *);
+void putblock1(char *, size_t *, struct jffs2_raw_inode *);
 struct dir *putdir(struct dir *, struct jffs2_raw_dirent *);
 void printdir(char *o, size_t size, struct dir *d, const char *path, 
      int verbose);
@@ -134,6 +135,41 @@ void putblock(char *b, size_t bsize, size_t * rsize,
 	}
 
 	*rsize = je32_to_cpu(n->isize);
+}
+
+/*
+   b       - buffer
+   bsize   - buffer size
+   rsize   - result size
+   n       - node
+ */
+
+void putblock1(char *b, size_t * rsize, struct jffs2_raw_inode *n)
+{
+        uLongf dlen = je32_to_cpu(n->dsize);
+
+        switch (n->compr) {
+                case JFFS2_COMPR_ZLIB:
+                        uncompress((Bytef *) b, &dlen,
+                                (Bytef *) ((char *) n) + sizeof(struct jffs2_raw_inode),
+                                (uLongf) je32_to_cpu(n->csize));
+                        break;
+
+                case JFFS2_COMPR_NONE:
+                        memcpy(b, ((char *) n) + sizeof(struct jffs2_raw_inode), dlen);
+                        break;
+
+                case JFFS2_COMPR_ZERO:
+                        bzero(b, dlen);
+                        break;
+
+                        /* [DYN]RUBIN support required! */
+
+                default:
+                        errmsg_die("Unsupported compression method!");
+        }
+
+        *rsize = dlen;
 }
 
 /* adds/removes directory node into dir struct. */
@@ -454,7 +490,7 @@ struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino,
 					((char *) i) + sizeof(struct jffs2_raw_inode), je32_to_cpu(i->dsize));
 				if (crc != je32_to_cpu(i->data_crc)) {
 					fprintf(stderr, "CRC mismatch: %u != %u\n", crc, je32_to_cpu(i->data_crc));
-					goto skip;
+					//goto skip;
 				}
 
 				if (vmaxt < v)
@@ -866,9 +902,10 @@ void do_extract(char* imagebuf, size_t imagesize, struct dir *d, char m, struct 
                 warnmsg("Failed to create %s: %s", fnbuf, strerror(errno));
             } else {
                 while(ri) {
-                    char buf[16384];
-                    putblock(buf, sizeof(buf), &sz, ri);
+                    char* buf = xmalloc(je32_to_cpu(ri->dsize));
+                    putblock1(buf, &sz, ri);
                     write(fd, buf, sz);
+                    free(buf);
                     ri = find_raw_inode(imagebuf, imagesize, d->ino, je32_to_cpu(ri->version));
                 }
             }
