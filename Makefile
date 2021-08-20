@@ -1,9 +1,10 @@
 all: jffs2extract
 	
 jffs2extract: jffs2extract.o minilzo.o lzo_crc.o
+	$(CC) $^ -o $@ -lz
 
 %.o: %.c
-	$(CC) -g -O3 -c -Iinclude $< -o -lz
+	$(CC) -g -O3 -c -Iinclude $< -o $@
 
 VMLINUZ_SHA256=8544797b46641ed31f31523071de8f01443e0d52e3b39f0e5f1991fdbb0de092
 

@@ -885,9 +885,9 @@ void visit(char *o, size_t size, const char *path, int verbose, visitor visitor)
 
 void do_extract(char* imagebuf, size_t imagesize, struct dir *d, char m, struct jffs2_raw_inode *ri, uint32_t size, const char *path, int verbose)
 {
-    char fnbuf[4096];
+    char fnbuf[4096], *buf = malloc(1);
     int fd = -1;
-    size_t sz = 0;
+    size_t sz = 1;
     snprintf(fnbuf, sizeof(fnbuf), "%s%s%s", (path[0] == 0) ? "" : path+1, (path[0] == 0) ? "" : "/", d->name);
     switch(m) {
         case '/':
@@ -902,10 +902,10 @@ void do_extract(char* imagebuf, size_t imagesize, struct dir *d, char m, struct 
                 warnmsg("Failed to create %s: %s", fnbuf, strerror(errno));
             } else {
                 while(ri) {
-                    char* buf = xmalloc(je32_to_cpu(ri->dsize));
+                    if (sz < je32_to_cpu(ri->dsize))
+                        buf = realloc(buf, je32_to_cpu(ri->dsize));
                     putblock1(buf, &sz, ri);
                     write(fd, buf, sz);
-                    free(buf);
                     ri = find_raw_inode(imagebuf, imagesize, d->ino, je32_to_cpu(ri->version));
                 }
             }
@@ -914,6 +914,7 @@ void do_extract(char* imagebuf, size_t imagesize, struct dir *d, char m, struct 
             warnmsg("Not extracting special file %s", fnbuf);
             break;
     }
+    free(buf);
 }
 
 void usage(char** argv) {
