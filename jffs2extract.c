@@ -51,8 +51,6 @@
 #include "include/common.h"
 #include "include/lzoconf.h"
 
-#define SCRATCH_SIZE (5*1024*1024)
-
 /* macro to avoid "lvalue required as left operand of assignment" error */
 #define ADD_BYTES(p, n)		((p) = (typeof(p))((char *)(p) + (n)))
 
@@ -69,8 +67,7 @@ struct dir {
 
 int target_endian = __BYTE_ORDER;
 
-void putblock(char *, size_t, size_t *, struct jffs2_raw_inode *);
-void putblock1(char *, size_t *, struct jffs2_raw_inode *);
+void putblock(char *, size_t *, struct jffs2_raw_inode *);
 struct dir *putdir(struct dir *, struct jffs2_raw_dirent *);
 void printdir(char *o, size_t size, struct dir *d, const char *path, 
      int verbose);
@@ -101,50 +98,7 @@ void visit(char *o, size_t size, const char *path, int verbose, visitor visitor)
    n       - node
  */
 
-void putblock(char *b, size_t bsize, size_t * rsize,
-		struct jffs2_raw_inode *n)
-{
-	uLongf dlen = je32_to_cpu(n->dsize);
-
-	if (je32_to_cpu(n->isize) > bsize || (je32_to_cpu(n->offset) + dlen) > bsize)
-		errmsg_die("File does not fit into buffer!");
-
-	if (*rsize < je32_to_cpu(n->isize))
-		bzero(b + *rsize, je32_to_cpu(n->isize) - *rsize);
-
-	switch (n->compr) {
-		case JFFS2_COMPR_ZLIB:
-			uncompress((Bytef *) b + je32_to_cpu(n->offset), &dlen,
-					(Bytef *) ((char *) n) + sizeof(struct jffs2_raw_inode),
-					(uLongf) je32_to_cpu(n->csize));
-			break;
-
-		case JFFS2_COMPR_NONE:
-			memcpy(b + je32_to_cpu(n->offset),
-					((char *) n) + sizeof(struct jffs2_raw_inode), dlen);
-			break;
-
-		case JFFS2_COMPR_ZERO:
-			bzero(b + je32_to_cpu(n->offset), dlen);
-			break;
-
-			/* [DYN]RUBIN support required! */
-
-		default:
-			errmsg_die("Unsupported compression method!");
-	}
-
-	*rsize = je32_to_cpu(n->isize);
-}
-
-/*
-   b       - buffer
-   bsize   - buffer size
-   rsize   - result size
-   n       - node
- */
-
-void putblock1(char *b, size_t * rsize, struct jffs2_raw_inode *n)
+void putblock(char *b, size_t * rsize, struct jffs2_raw_inode *n)
 {
         uLongf dlen = je32_to_cpu(n->dsize);
 
@@ -387,7 +341,7 @@ void do_print(char* imagebuf, size_t imagesize, struct dir *d, char m, struct jf
     if ( d->type==DT_BLK || d->type==DT_CHR ) {
         dev_t rdev;
         size_t devsize;
-        putblock((char*)&rdev, sizeof(rdev), &devsize, ri);
+        putblock((char*)&rdev, &devsize, ri);
         if(verbose) printf("%4d, %3d ", major(rdev), minor(rdev));
     } else {
         if(verbose) printf("%9ld ", (long)len);
@@ -404,7 +358,7 @@ void do_print(char* imagebuf, size_t imagesize, struct dir *d, char m, struct jf
     if (d->type == DT_LNK) {
         char symbuf[1024];
         size_t symsize;
-        putblock(symbuf, sizeof(symbuf), &symsize, ri);
+        putblock(symbuf, &symsize, ri);
         symbuf[symsize] = 0;
         printf(" -> %s", symbuf);
     }
@@ -797,7 +751,7 @@ struct jffs2_raw_dirent *resolvepath0(char *o, size_t size, uint32_t ino,
 		if (dir->type == DT_LNK) {
 			struct jffs2_raw_inode *ri;
 			ri = find_raw_inode(o, size, DIRENT_INO(dir), 0);
-			putblock(symbuf, sizeof(symbuf), &symsize, ri);
+			putblock(symbuf, &symsize, ri);
 			symbuf[symsize] = 0;
 
 			tino = ino;
@@ -904,7 +858,7 @@ void do_extract(char* imagebuf, size_t imagesize, struct dir *d, char m, struct 
                 while(ri) {
                     if (sz < je32_to_cpu(ri->dsize))
                         buf = realloc(buf, je32_to_cpu(ri->dsize));
-                    putblock1(buf, &sz, ri);
+                    putblock(buf, &sz, ri);
                     write(fd, buf, sz);
                     ri = find_raw_inode(imagebuf, imagesize, d->ino, je32_to_cpu(ri->version));
                 }
@@ -928,7 +882,7 @@ int main(int argc, char **argv)
 {
 	int fd, opt, want_ctime = 0, verbose = 0;
 	size_t filesize, bytes;
-    visitor v = NULL;
+	visitor v = NULL;
 	char *scratch, *imgfile = NULL;
 	size_t ssize = 0;
 
