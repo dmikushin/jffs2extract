@@ -49,6 +49,7 @@
 
 #include "include/jffs2-user.h"
 #include "include/common.h"
+#include "include/lzoconf.h"
 
 #define SCRATCH_SIZE (5*1024*1024)
 
@@ -425,13 +426,36 @@ struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino,
 	lr = n;
 
 	do {
-		while (n < e && je16_to_cpu(n->u.magic) != JFFS2_MAGIC_BITMASK)
-			ADD_BYTES(n, 4);
+		while (n < e) {
+			if (je16_to_cpu(n->u.magic) == JFFS2_MAGIC_BITMASK) break;
 
-		if (n < e && je16_to_cpu(n->u.magic) == JFFS2_MAGIC_BITMASK) {
-			if (je16_to_cpu(n->u.nodetype) == JFFS2_NODETYPE_INODE &&
-				je32_to_cpu(n->i.ino) == ino && (v = je32_to_cpu(n->i.version)) > vcur) {
-				/* XXX crc check */
+			ADD_BYTES(n, 4);
+		}
+
+		if (n >= e)
+			n = (union jffs2_node_union *) o;       /* we're at the end, rewind to the beginning */
+		else {
+			/* JFFS2_ASSERT_NODETYPE(je16_to_cpu(n->u.nodetype)); */
+			do {
+				if (je16_to_cpu(n->u.nodetype) != JFFS2_NODETYPE_INODE) goto skip;
+				if (je32_to_cpu(n->i.ino) != ino) goto skip;
+				if ((v = je32_to_cpu(n->i.version)) <= vcur) goto skip;
+
+				struct jffs2_raw_inode *i = &(n->i);
+				if ((i->compr != JFFS2_COMPR_ZLIB) && (i->compr != JFFS2_COMPR_NONE) &&
+					(i->compr != JFFS2_COMPR_ZERO)) {
+					/* Unsupported compression method or not an inode. */
+					goto skip;
+				}
+
+				/* Verify compressed data CRC against the reference value. */
+				char* data = NULL;
+				lzo_uint32_t crc = lzo_crc32(0,
+					((char *) i) + sizeof(struct jffs2_raw_inode), je32_to_cpu(i->dsize));
+				if (crc != je32_to_cpu(i->data_crc)) {
+					fprintf(stderr, "CRC mismatch: %u != %u\n", crc, je32_to_cpu(i->data_crc));
+					goto skip;
+				}
 
 				if (vmaxt < v)
 					vmaxt = v;
@@ -441,12 +465,20 @@ struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino,
 				}
 
 				if (v == (vcur + 1))
-					return (&(n->i));
-			}
+					return i;
 
-			ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
-		} else
-			n = (union jffs2_node_union *) o;	/* we're at the end, rewind to the beginning */
+				/* Advance by n->u.totlen, if CRC is correct. */
+				ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
+
+				break;
+
+			skip :
+				/* Do not advance by n->u.totlen, as the hypotetical inode could be
+				 * just a random match of JFFS2_MAGIC_BITMASK. */
+				ADD_BYTES(n, 4);
+
+			} while (0);
+		}
 
 		if (lr == n) {			/* whole loop since last read */
 			vmax = vmaxt;
