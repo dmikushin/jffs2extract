@@ -901,7 +901,7 @@ void usage(char** argv) {
 int main(int argc, char **argv)
 {
 	int fd, opt, want_ctime = 0, verbose = 0;
-	size_t filesize = 0, bytes;
+	size_t filesize = 0, bytes = 0;
 	visitor v = NULL;
 	char *scratch, *imgfile = NULL;
 	size_t ssize = 0;
