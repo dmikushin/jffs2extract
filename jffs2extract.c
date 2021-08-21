@@ -425,7 +425,6 @@ struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino,
 		if (n >= e)
 			n = (union jffs2_node_union *) o;       /* we're at the end, rewind to the beginning */
 		else {
-			/* JFFS2_ASSERT_NODETYPE(je16_to_cpu(n->u.nodetype)); */
 			do {
 				if (je16_to_cpu(n->u.nodetype) != JFFS2_NODETYPE_INODE) goto skip;
 				if (je32_to_cpu(n->i.ino) != ino) goto skip;
@@ -439,11 +438,10 @@ struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino,
 				}
 
 				/* Verify compressed data CRC against the reference value. */
-				char* data = NULL;
 				lzo_uint32_t crc = lzo_crc32(0,
 					((char *) i) + sizeof(struct jffs2_raw_inode), je32_to_cpu(i->dsize));
 				if (crc != je32_to_cpu(i->data_crc)) {
-					fprintf(stderr, "CRC mismatch: %u != %u\n", crc, je32_to_cpu(i->data_crc));
+					fprintf(stderr, "data CRC mismatch: %u != %u\n", crc, je32_to_cpu(i->data_crc));
 					//goto skip;
 				}
 
@@ -502,26 +500,41 @@ struct dir *collectdir(char *o, size_t size, uint32_t ino, struct dir *d)
 	union jffs2_node_union *lr;	/* last block position */
 	union jffs2_node_union *mp = NULL;	/* minimum position */
 
-	uint32_t vmin, vmint, vmaxt, vmax, vcur, v;
+	uint32_t vmin, vmint, vmaxt, vmax, v;
+	int64_t vcur = -1;
 
 	vmin = 0;					/* next to read */
 	vmax = ~((uint32_t) 0);		/* last to read */
 	vmint = ~((uint32_t) 0);
 	vmaxt = 0;					/* found maximum */
-	vcur = 0;					/* XXX what is smallest version number used? */
 	/* too low version number can easily result excess log rereading */
 
 	n = (union jffs2_node_union *) o;
 	lr = n;
 
 	do {
-		while (n < e && je16_to_cpu(n->u.magic) != JFFS2_MAGIC_BITMASK)
-			ADD_BYTES(n, 4);
+        while (n < e) {
+            if (je16_to_cpu(n->u.magic) == JFFS2_MAGIC_BITMASK) break;
 
-		if (n < e && je16_to_cpu(n->u.magic) == JFFS2_MAGIC_BITMASK) {
-			if (je16_to_cpu(n->u.nodetype) == JFFS2_NODETYPE_DIRENT &&
-				je32_to_cpu(n->d.pino) == ino && (v = je32_to_cpu(n->d.version)) > vcur) {
-				/* XXX crc check */
+            ADD_BYTES(n, 4);
+        }
+
+        if (n >= e)
+            n = (union jffs2_node_union *) o;       /* we're at the end, rewind to the beginning */
+        else {
+            do {
+                if (je16_to_cpu(n->u.nodetype) != JFFS2_NODETYPE_DIRENT) goto skip;
+                if (je32_to_cpu(n->d.pino) != ino) goto skip;
+                if ((v = je32_to_cpu(n->d.version)) < vcur) goto skip;
+				if (v == vcur) break;		/* whole loop since last read */
+
+                /* Verify name CRC against the reference value. */
+                lzo_uint32_t crc = lzo_crc32(0,
+                    ((char *) &n->d) + sizeof(struct jffs2_raw_dirent), n->d.nsize);
+                if (crc != je32_to_cpu(n->d.name_crc)) {
+                    fprintf(stderr, "dirent name CRC mismatch: %u != %u\n", crc, je32_to_cpu(n->d.name_crc));
+                    //goto skip;
+                }
 
 				if (vmaxt < v)
 					vmaxt = v;
@@ -537,12 +550,21 @@ struct dir *collectdir(char *o, size_t size, uint32_t ino, struct dir *d)
 					vcur++;
 					vmint = ~((uint32_t) 0);
 				}
-			}
 
-			ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
-		} else
-			n = (union jffs2_node_union *) o;	/* we're at the end, rewind to the beginning */
+                /* Advance by n->u.totlen, if CRC is correct. */
+                ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
 
+                break;
+
+            skip :
+
+	            /* Do not advance by n->u.totlen, as the hypotetical inode could be
+				 * just a random match of JFFS2_MAGIC_BITMASK. */
+				ADD_BYTES(n, 4);
+
+			} while (0);
+		}
+			   
 		if (lr == n) {			/* whole loop since last read */
 			vmax = vmaxt;
 			vmin = vmint;
@@ -558,6 +580,7 @@ struct dir *collectdir(char *o, size_t size, uint32_t ino, struct dir *d)
 				vcur = vmin;
 			}
 		}
+
 	} while (vcur < vmax);
 
 	return d;
@@ -592,12 +615,11 @@ struct jffs2_raw_dirent *resolvedirent(char *o, size_t size,
 
 	struct jffs2_raw_dirent *dd = NULL;
 
-	uint32_t vmax, v;
+	int64_t vmax = -1;
+	uint32_t v;
 
 	if (!pino && ino <= 1)
 		return dd;
-
-	vmax = 0;
 
 	n = (union jffs2_node_union *) o;
 
@@ -614,10 +636,8 @@ struct jffs2_raw_dirent *resolvedirent(char *o, size_t size,
 							   !memcmp(name, n->d.name, nsize)))) {
 				/* XXX crc check */
 
-				if (vmax < v) {
-					vmax = v;
-					dd = &(n->d);
-				}
+				vmax = v;
+				dd = &(n->d);
 			}
 
 			ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
