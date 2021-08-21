@@ -625,25 +625,39 @@ struct jffs2_raw_dirent *resolvedirent(char *o, size_t size,
 	n = (union jffs2_node_union *) o;
 
 	do {
-		while (n < e && je16_to_cpu(n->u.magic) != JFFS2_MAGIC_BITMASK)
-			ADD_BYTES(n, 4);
+		while (n < e) {
+			if (je16_to_cpu(n->u.magic) == JFFS2_MAGIC_BITMASK) break;
 
-		if (n < e && je16_to_cpu(n->u.magic) == JFFS2_MAGIC_BITMASK) {
-			if (je16_to_cpu(n->u.nodetype) == JFFS2_NODETYPE_DIRENT &&
-					(!ino || je32_to_cpu(n->d.ino) == ino) &&
-					(v = je32_to_cpu(n->d.version)) > vmax &&
-					(!pino || (je32_to_cpu(n->d.pino) == pino &&
-							   nsize == n->d.nsize &&
-							   !memcmp(name, n->d.name, nsize)))) {
+			ADD_BYTES(n, 4);
+		}
+
+		if (n >= e)
+			return dd;
+		else {
+			do {
+				if (je16_to_cpu(n->u.nodetype) != JFFS2_NODETYPE_DIRENT) goto skip;
+				if (!(!ino || je32_to_cpu(n->d.ino) == ino)) goto skip;
+				if (!(!pino || (je32_to_cpu(n->d.pino) == pino))) goto skip;
+				if (nsize != n->d.nsize) goto skip;
+				if (memcmp(name, n->d.name, nsize)) goto skip;
+				if ((v = je32_to_cpu(n->d.version)) <= vmax) goto skip;
+		
 				/* XXX crc check */
 
-				vmax = v;
-				dd = &(n->d);
-			}
+                                vmax = v;
+        	                dd = &(n->d);
 
-			ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
-		} else
-			return dd;
+				ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
+
+				break;
+
+			skip :
+
+				ADD_BYTES(n, 4);
+
+			} while (0);
+		}
+
 	} while (1);
 }
 
