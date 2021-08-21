@@ -73,7 +73,7 @@ void printdir(char *o, size_t size, struct dir *d, const char *path,
      int verbose);
 void freedir(struct dir *);
 
-struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino, uint32_t vcur);
+struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino, int64_t vcur);
 struct jffs2_raw_dirent *resolvedirent(char *, size_t, uint32_t, uint32_t,
 		char *, uint8_t);
 struct jffs2_raw_dirent *resolvename(char *, size_t, uint32_t, char *, uint8_t);
@@ -300,7 +300,7 @@ void visitdir(char *o, size_t size, struct dir *d, const char *path, int verbose
 			default:
 				m = '?';
 		}
-		ri = find_raw_inode(o, size, d->ino, 0);
+		ri = find_raw_inode(o, size, d->ino, -1);
 		if (!ri) {
 			warnmsg("bug: raw_inode missing!");
 			d = d->next;
@@ -397,7 +397,7 @@ void freedir(struct dir *d)
  */
 
 struct jffs2_raw_inode *find_raw_inode(char *o, size_t size, uint32_t ino, 
-	uint32_t vcur)
+	int64_t vcur)
 {
 	/* aligned! */
 	union jffs2_node_union *n;
@@ -536,20 +536,18 @@ struct dir *collectdir(char *o, size_t size, uint32_t ino, struct dir *d)
                     //goto skip;
                 }
 
-				if (vmaxt < v)
-					vmaxt = v;
-				if (vmint > v) {
-					vmint = v;
-					mp = n;
-				}
+		if (vmaxt < v)
+			vmaxt = v;
+		if (vmint > v) {
+			vmint = v;
+			mp = n;
+		}
 
-				if (v == (vcur + 1)) {
-					d = putdir(d, &(n->d));
+		d = putdir(d, &(n->d));
 
-					lr = n;
-					vcur++;
-					vmint = ~((uint32_t) 0);
-				}
+		lr = n;
+		vcur = v;
+		vmint = ~((uint32_t) 0);
 
                 /* Advance by n->u.totlen, if CRC is correct. */
                 ADD_BYTES(n, ((je32_to_cpu(n->u.totlen) + 3) & ~3));
@@ -579,6 +577,9 @@ struct dir *collectdir(char *o, size_t size, uint32_t ino, struct dir *d)
 
 				vcur = vmin;
 			}
+		}
+		else {
+			if (v == vcur) ADD_BYTES(n, 4);
 		}
 
 	} while (vcur < vmax);
@@ -770,7 +771,7 @@ struct jffs2_raw_dirent *resolvepath0(char *o, size_t size, uint32_t ino,
 
 		if (dir->type == DT_LNK) {
 			struct jffs2_raw_inode *ri;
-			ri = find_raw_inode(o, size, DIRENT_INO(dir), 0);
+			ri = find_raw_inode(o, size, DIRENT_INO(dir), -1);
 			putblock(symbuf, &symsize, ri);
 			symbuf[symsize] = 0;
 
